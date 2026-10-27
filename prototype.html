@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>DepthHead – אב טיפוס</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Rubik:wght@400;500;600&display=swap">
+<style>
+:root{--bg:#12141c;--panel:#1b1e2b;--line:#2c3144;--ink:#e8e9f0;--mute:#8c92a8;--acc:#8b7cf6;--dot:#ffb454;color-scheme:dark;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:Rubik,system-ui,sans-serif;display:flex;justify-content:center;padding:20px}
+.plug{width:100%;max-width:880px;background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:20px;display:grid;grid-template-columns:minmax(0,1fr) 270px;gap:20px}
+@media(max-width:720px){.plug{grid-template-columns:1fr}}
+h1{font-size:18px;font-weight:600;margin:0 0 2px}
+.sub{color:var(--mute);font-size:13px;margin:0 0 12px}
+canvas{width:100%;aspect-ratio:1;background:#151826;border-radius:14px;touch-action:none;cursor:grab;display:block}
+.side{display:flex;flex-direction:column;gap:16px}
+.row{display:flex;justify-content:space-between;font-size:13px;color:var(--mute);margin-bottom:6px}
+.row b{color:var(--ink);font-weight:500}
+input[type=range]{width:100%;accent-color:var(--acc)}
+.presets{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
+button,.file{font:inherit;font-size:13px;color:var(--ink);background:#242839;border:1px solid var(--line);border-radius:10px;padding:9px 6px;cursor:pointer;text-align:center}
+button:hover,.file:hover{border-color:var(--acc)}
+button.on{background:var(--acc);border-color:var(--acc);color:#12141c;font-weight:600}
+button:focus-visible,input:focus-visible{outline:2px solid var(--dot);outline-offset:2px}
+.play{padding:12px;font-size:15px;font-weight:600}
+.file input{display:none}
+.note{font-size:12px;color:var(--mute);line-height:1.5}
+</style>
+</head>
+<body>
+<main class="plug">
+  <section>
+    <h1>DepthHead</h1>
+    <p class="sub">גררו את הנקודה סביב הראש. קרוב לראש = קרוב אליכם, רחוק = עומק. מומלץ באוזניות.</p>
+    <canvas id="cv" aria-label="מיקום הכלי סביב הראש"></canvas>
+  </section>
+  <section class="side">
+    <div>
+      <div class="row"><span>פריסטים</span></div>
+      <div class="presets" id="presets"></div>
+    </div>
+    <div>
+      <div class="row"><span>גובה</span><b id="hv">0%</b></div>
+      <input type="range" id="h" min="-100" max="100" value="0" aria-label="גובה">
+    </div>
+    <div>
+      <div class="row"><span>חלל (ריוורב עומק)</span><b id="rv">30%</b></div>
+      <input type="range" id="room" min="0" max="100" value="30" aria-label="חלל">
+    </div>
+    <div class="row"><span>זווית</span><b id="av">0°</b></div>
+    <div class="row"><span>מרחק</span><b id="dv">0 מ׳</b></div>
+    <button class="play" id="play">נגן דוגמה</button>
+    <label class="file">טעינת קובץ שמע משלכם<input type="file" id="file" accept="audio/*"></label>
+    <p class="note">זהו אב טיפוס שרץ בדפדפן ומשתמש במנוע HRTF אמיתי. הגרסה ל-FL Studio (VST3) תשתמש באותה לוגיקה.</p>
+  </section>
+</main>
+<script>
+const P={
+ "פסנתר":{az:-30,d:.35,h:.05,room:.35,kind:"tone",type:"triangle",cut:6000,dec:1.1,notes:[262,330,392,523,392,330,294,349]},
+ "גיטרה":{az:35,d:.4,h:0,room:.3,kind:"tone",type:"sawtooth",cut:2400,dec:.55,notes:[196,247,294,247,220,277,330,277]},
+ "שירה":{az:0,d:.15,h:.1,room:.2,kind:"tone",type:"square",cut:1400,dec:.9,notes:[330,0,392,0,440,0,392,0]},
+ "בס":{az:0,d:.3,h:-.2,room:.1,kind:"tone",type:"sine",cut:700,dec:.35,notes:[65,0,65,98,0,65,73,0]},
+ "תופים":{az:10,d:.75,h:.15,room:.5,kind:"drum",notes:[1,2,3,2,1,2,3,2]},
+ "פאד":{az:150,d:.8,h:.5,room:.7,kind:"tone",type:"sawtooth",cut:1800,dec:2.2,notes:[220,0,0,0,277,0,0,0]}
+};
+const S={az:0,d:.5,h:0,room:.3,preset:"פסנתר",mode:"demo"};
+const cv=document.getElementById("cv"),g=cv.getContext("2d");
+let ctx,panner,hs,lp,dry,wet,master,input,audioEl,fileSrc,timer,playing=false,step=0;
+
+function dist(){return .6+S.d*7}
+function layout(){const r=cv.getBoundingClientRect(),k=devicePixelRatio||1;cv.width=r.width*k;cv.height=r.width*k;draw()}
+function draw(){
+ const W=cv.width,c=W/2,R=W*.46,k=W/420;g.clearRect(0,0,W,W);
+ g.strokeStyle="#2c3144";g.lineWidth=1*k;
+ [.25,.5,.75,1].forEach(f=>{g.beginPath();g.arc(c,c,R*f,0,7);g.stroke()});
+ g.beginPath();g.moveTo(c,c-R);g.lineTo(c,c+R);g.moveTo(c-R,c);g.lineTo(c+R,c);g.stroke();
+ // head
+ g.fillStyle="#2a2f45";g.strokeStyle="#8b7cf6";g.lineWidth=2*k;
+ g.beginPath();g.ellipse(c,c,32*k,38*k,0,0,7);g.fill();g.stroke();
+ g.beginPath();g.moveTo(c-8*k,c-36*k);g.lineTo(c,c-50*k);g.lineTo(c+8*k,c-36*k);g.stroke();
+ [-1,1].forEach(s=>{g.beginPath();g.ellipse(c+s*35*k,c,7*k,13*k,0,0,7);g.fillStyle="#3a4060";g.fill();g.stroke()});
+ g.fillStyle="#8c92a8";g.font=`${11*k}px Rubik,sans-serif`;g.textAlign="center";
+ g.fillText("קדימה",c,c-R-4*k);g.fillText("אחורה",c,c+R+13*k);
+ // source
+ const a=S.az*Math.PI/180,rr=R*(.2+S.d*.8),x=c+Math.sin(a)*rr,y=c-Math.cos(a)*rr;
+ g.strokeStyle="rgba(255,180,84,.35)";g.setLineDash([4*k,4*k]);g.beginPath();g.moveTo(c,c);g.lineTo(x,y);g.stroke();g.setLineDash([]);
+ const hr=(10+S.h*5)*k;
+ g.fillStyle="#ffb454";g.beginPath();g.arc(x,y,hr,0,7);g.fill();
+ g.strokeStyle="rgba(255,180,84,.4)";g.lineWidth=3*k;g.beginPath();g.arc(x,y,hr+5*k,0,7);g.stroke();
+ g.fillStyle="#12141c";g.font=`600 ${10*k}px Rubik,sans-serif`;g.fillText(S.h>.15?"▲":S.h<-.15?"▼":"●",x,y+3.5*k);
+ document.getElementById("av").textContent=Math.round(S.az)+"°";
+ document.getElementById("dv").textContent=dist().toFixed(1)+" מ׳";
+ document.getElementById("hv").textContent=Math.round(S.h*100)+"%";
+ document.getElementById("rv").textContent=Math.round(S.room*100)+"%";
+}
+function apply(){
+ if(ctx){
+  const a=S.az*Math.PI/180,d=dist(),t=ctx.currentTime;
+  const set=(p,v)=>p.setTargetAtTime(v,t,.03);
+  set(panner.positionX,Math.sin(a)*d);set(panner.positionZ,-Math.cos(a)*d);set(panner.positionY,S.h*d*.9);
+  set(hs.gain,S.h*7);
+  set(lp.frequency,19000-S.d*13000);
+  set(wet.gain,S.room*(.3+S.d*.9));
+  set(dry.gain,1);
+ }
+ draw();
+}
+function build(){
+ ctx=new (window.AudioContext||window.webkitAudioContext)();
+ input=ctx.createGain();hs=ctx.createBiquadFilter();hs.type="highshelf";hs.frequency.value=6500;
+ panner=new PannerNode(ctx,{panningModel:"HRTF",distanceModel:"inverse",refDistance:1,rolloffFactor:.8});
+ lp=ctx.createBiquadFilter();lp.type="lowpass";
+ dry=ctx.createGain();wet=ctx.createGain();master=ctx.createGain();master.gain.value=.7;
+ const conv=ctx.createConvolver(),len=ctx.sampleRate*2.4,b=ctx.createBuffer(2,len,ctx.sampleRate);
+ for(let c=0;c<2;c++){const d=b.getChannelData(c);for(let i=0;i<len;i++)d[i]=(Math.random()*2-1)*Math.pow(1-i/len,2.5)}
+ conv.buffer=b;
+ input.connect(hs);hs.connect(panner);panner.connect(lp);lp.connect(dry);dry.connect(master);
+ lp.connect(conv);conv.connect(wet);wet.connect(master);master.connect(ctx.destination);
+ apply();
+}
+function tone(f,t,p){
+ const o=ctx.createOscillator(),e=ctx.createGain(),fl=ctx.createBiquadFilter();
+ o.type=p.type;o.frequency.value=f;fl.type="lowpass";fl.frequency.value=p.cut;
+ e.gain.setValueAtTime(0,t);e.gain.linearRampToValueAtTime(.35,t+.01);e.gain.exponentialRampToValueAtTime(.001,t+p.dec);
+ o.connect(fl);fl.connect(e);e.connect(input);o.start(t);o.stop(t+p.dec+.05);
+}
+function drum(n,t){
+ if(n===1){const o=ctx.createOscillator(),e=ctx.createGain();o.frequency.setValueAtTime(150,t);o.frequency.exponentialRampToValueAtTime(40,t+.15);
+  e.gain.setValueAtTime(.8,t);e.gain.exponentialRampToValueAtTime(.001,t+.25);o.connect(e);e.connect(input);o.start(t);o.stop(t+.3)}
+ else{const len=ctx.sampleRate*.12,b=ctx.createBuffer(1,len,ctx.sampleRate),d=b.getChannelData(0);
+  for(let i=0;i<len;i++)d[i]=Math.random()*2-1;
+  const s=ctx.createBufferSource(),f=ctx.createBiquadFilter(),e=ctx.createGain();s.buffer=b;f.type="highpass";f.frequency.value=n===3?7000:2500;
+  e.gain.setValueAtTime(n===3?.25:.5,t);e.gain.exponentialRampToValueAtTime(.001,t+(n===3?.05:.12));s.connect(f);f.connect(e);e.connect(input);s.start(t)}
+}
+function tick(){
+ const p=P[S.preset],n=p.notes[step%p.notes.length],t=ctx.currentTime+.05;step++;
+ if(!n)return;p.kind==="drum"?drum(n,t):tone(n,t,p);
+}
+function start(){
+ if(!ctx)build();ctx.resume();playing=true;
+ if(S.mode==="file"){audioEl.play()}else{step=0;timer=setInterval(tick,260)}
+ document.getElementById("play").textContent="עצור";
+}
+function stop(){playing=false;clearInterval(timer);if(audioEl)audioEl.pause();document.getElementById("play").textContent=S.mode==="file"?"נגן את הקובץ":"נגן דוגמה"}
+document.getElementById("play").onclick=()=>playing?stop():start();
+document.getElementById("file").onchange=e=>{
+ const f=e.target.files[0];if(!f)return;
+ if(!ctx)build();
+ if(!audioEl){audioEl=new Audio();audioEl.loop=true;fileSrc=ctx.createMediaElementSource(audioEl);fileSrc.connect(input)}
+ audioEl.src=URL.createObjectURL(f);S.mode="file";if(playing){clearInterval(timer);start()}else stop();
+};
+function load(name){
+ const p=P[name];S.preset=name;S.az=p.az;S.d=p.d;S.h=p.h;S.room=p.room;S.mode=S.mode;
+ document.getElementById("h").value=p.h*100;document.getElementById("room").value=p.room*100;
+ document.querySelectorAll("#presets button").forEach(b=>b.classList.toggle("on",b.textContent===name));
+ apply();
+}
+const pr=document.getElementById("presets");
+Object.keys(P).forEach(n=>{const b=document.createElement("button");b.textContent=n;b.onclick=()=>load(n);pr.appendChild(b)});
+document.getElementById("h").oninput=e=>{S.h=e.target.value/100;apply()};
+document.getElementById("room").oninput=e=>{S.room=e.target.value/100;apply()};
+let drag=false;
+function move(e){
+ const r=cv.getBoundingClientRect(),x=e.clientX-r.left-r.width/2,y=e.clientY-r.top-r.height/2,R=r.width*.46;
+ S.az=Math.atan2(x,-y)*180/Math.PI;
+ S.d=Math.min(1,Math.max(0,(Math.hypot(x,y)/R-.2)/.8));apply();
+}
+cv.addEventListener("pointerdown",e=>{drag=true;cv.setPointerCapture(e.pointerId);move(e)});
+cv.addEventListener("pointermove",e=>{if(drag)move(e)});
+cv.addEventListener("pointerup",()=>drag=false);
+addEventListener("resize",layout);
+load("פסנתר");layout();
+</script>
+</body>
+</html>
